@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Review UI changes</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span><span></span>
+        </div>
+        <div>
+          <p class="eyebrow">Local visual review</p>
+          <h1>Review changes</h1>
+        </div>
+      </div>
+      <div id="summary" class="summary" aria-live="polite"></div>
+    </header>
+
+    <main>
+      <nav id="batches" class="batches" aria-label="Review batches"></nav>
+      <section id="content" aria-live="polite"></section>
+    </main>
+
+    <template id="empty-template">
+      <div class="empty-state">
+        <div class="empty-icon" aria-hidden="true">+</div>
+        <p class="eyebrow">Nothing to review</p>
+        <h2>Publish your first comparison</h2>
+        <p>Run the skill's publish command with a manifest containing before and after images.</p>
+      </div>
+    </template>
+
+    <script type="module" src="/app.js" referrerpolicy="no-referrer"></script>
+  </body>
+</html>
