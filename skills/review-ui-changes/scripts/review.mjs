@@ -16,7 +16,6 @@ import {
 import { createServer } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { homedir, platform } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,16 +31,17 @@ const HELP = `review-ui-changes
 Publish local before/after UI reviews and read revision-bound feedback.
 
 Usage:
-  node review.mjs publish <manifest.json> [--root <project>] [--port <port>]
+  node review.mjs publish <manifest.json|-> [--root <project>] [--port <port>]
   node review.mjs feedback [--root <project>] [--batch <batch-id>]
   node review.mjs address --comment <comment-id> [--comment <id> ...]
   node review.mjs start [--port <port>] [--idle-minutes <minutes>]
   node review.mjs stop
   node review.mjs status [--root <project>]
 
-The manifest contains id, title, and surfaces. A new surface requires before and
-after image paths. A later revision requires after and expectedRevision. The
-shared local server chooses an available port automatically unless --port is set.
+Use - to read the manifest from stdin. The manifest contains id, title, and
+surfaces. A new surface requires before and after image paths. A later revision
+requires after and expectedRevision. The shared local server chooses an available
+port automatically unless --port is set.
 `;
 
 function parseArguments(argv) {
@@ -103,16 +103,58 @@ function isInside(parent, child) {
   return pathFromParent === "" || (!pathFromParent.startsWith(`..${sep}`) && pathFromParent !== "..");
 }
 
-function defaultDataDirectory() {
-  if (process.env.REVIEW_UI_DATA_DIR) return resolve(process.env.REVIEW_UI_DATA_DIR);
-  if (platform() === "darwin") return join(homedir(), "Library", "Application Support", "review-ui-changes");
-  if (platform() === "win32" && process.env.LOCALAPPDATA) {
-    return join(process.env.LOCALAPPDATA, "review-ui-changes");
+async function requireDirectory(directory, label) {
+  try {
+    const directoryInfo = await stat(directory);
+    if (!directoryInfo.isDirectory()) throw new Error(`${label} is not a directory: ${directory}`);
+    return await realpath(directory);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error(`${label} does not exist: ${directory}`, { cause: error });
+    throw error;
   }
-  const stateHome = process.env.XDG_STATE_HOME
-    ? resolve(process.env.XDG_STATE_HOME)
-    : join(homedir(), ".local", "state");
-  return join(stateHome, "review-ui-changes");
+}
+
+async function existingGitDirectory(projectRoot) {
+  const dotGit = join(projectRoot, ".git");
+  let dotGitInfo;
+  try {
+    dotGitInfo = await stat(dotGit);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new Error(
+        `No .git entry exists in ${projectRoot}. This command does not initialize Git.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+
+  if (dotGitInfo.isDirectory()) return realpath(dotGit);
+  if (!dotGitInfo.isFile()) throw new Error(`The .git entry is not a file or directory: ${dotGit}`);
+
+  const pointer = (await readFile(dotGit, "utf8")).trim().match(/^gitdir:\s*(.+)$/i);
+  if (!pointer) throw new Error(`The .git worktree pointer is invalid: ${dotGit}`);
+  const worktreeGitDirectory = await requireDirectory(
+    resolve(projectRoot, pointer[1]),
+    "The .git worktree directory",
+  );
+
+  try {
+    const commonPointer = (await readFile(join(worktreeGitDirectory, "commondir"), "utf8")).trim();
+    if (!commonPointer) throw new Error(`The Git commondir file is empty: ${worktreeGitDirectory}`);
+    return requireDirectory(
+      resolve(worktreeGitDirectory, commonPointer),
+      "The common Git directory",
+    );
+  } catch (error) {
+    if (error.code === "ENOENT") return worktreeGitDirectory;
+    throw error;
+  }
+}
+
+async function defaultDataDirectory(projectRoot) {
+  if (process.env.REVIEW_UI_DATA_DIR) return resolve(process.env.REVIEW_UI_DATA_DIR);
+  return join(await existingGitDirectory(projectRoot), "review-ui-changes");
 }
 
 async function canonicalProjectRoot(value) {
@@ -128,7 +170,9 @@ async function canonicalProjectRoot(value) {
 async function contextFrom(args) {
   const projectRoot = await canonicalProjectRoot(option(args, "--root", process.cwd()));
   const explicitDataDirectory = option(args, "--data-dir", option(args, "--state-dir", null));
-  const dataDirectory = explicitDataDirectory ? resolve(String(explicitDataDirectory)) : defaultDataDirectory();
+  const dataDirectory = explicitDataDirectory
+    ? resolve(String(explicitDataDirectory))
+    : await defaultDataDirectory(projectRoot);
   const conductorWorkspaceId = process.env.CONDUCTOR_WORKSPACE_ID?.trim() || null;
   const workspaceKey = conductorWorkspaceId ? `conductor:${conductorWorkspaceId}` : `path:${projectRoot}`;
 
@@ -305,6 +349,17 @@ function imageExtension(filePath) {
   return extension;
 }
 
+async function readManifestFromStdin() {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of process.stdin) {
+    length += chunk.length;
+    if (length > 1024 * 1024) throw new Error("Manifest is too large.");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 async function copyScreenshot(sourceValue, manifestDirectory, context, reviewId, surfaceId, name) {
   if (typeof sourceValue !== "string" || sourceValue.length === 0) {
     throw new Error(`Missing screenshot path for ${surfaceId}.`);
@@ -349,9 +404,14 @@ async function publish(manifestPathValue, args, context) {
   if (process.env.CONDUCTOR_IS_LOCAL === "0") {
     throw new Error("Local visual review is unavailable in a Conductor cloud workspace.");
   }
-  if (!manifestPathValue) throw new Error("publish requires a manifest JSON path.");
-  const manifestPath = resolve(manifestPathValue);
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (!manifestPathValue) throw new Error("publish requires a manifest JSON path or - for stdin.");
+  const manifestFromStdin = manifestPathValue === "-";
+  const manifestPath = manifestFromStdin ? null : resolve(manifestPathValue);
+  const manifestDirectory = manifestFromStdin ? context.projectRoot : dirname(manifestPath);
+  const manifestJson = manifestFromStdin
+    ? await readManifestFromStdin()
+    : await readFile(manifestPath, "utf8");
+  const manifest = JSON.parse(manifestJson);
   const { batchId, batchTitle } = validateManifest(manifest);
   const server = await startServer(args, context);
 
@@ -402,7 +462,7 @@ async function publish(manifestPathValue, args, context) {
         if (!input.before) throw new Error(`New surface ${surfaceId} requires a before screenshot.`);
         before = await copyScreenshot(
           input.before,
-          dirname(manifestPath),
+          manifestDirectory,
           context,
           review.id,
           surfaceId,
@@ -412,7 +472,7 @@ async function publish(manifestPathValue, args, context) {
 
       const after = await copyScreenshot(
         input.after,
-        dirname(manifestPath),
+        manifestDirectory,
         context,
         review.id,
         surfaceId,

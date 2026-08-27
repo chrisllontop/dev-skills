@@ -34,11 +34,12 @@ $skill-installer install https://github.com/chrisllontop/frontend-skills/tree/ma
 
 The coding agent captures screenshots with the browser tooling it already has, publishes before-and-after pairs to a local board, and ends its turn. You review the images asynchronously, mark surfaces ready, or leave comments. On the next turn, the agent reads only unresolved feedback, makes corrections, republishes, and marks handled comments addressed.
 
-The board and its state stay on your machine. A single loopback service is shared by local agents, while random workspace IDs, review IDs, and access tokens keep reviews separate. There is no hosted service, account, telemetry, screenshot capture, or runtime npm dependency.
+The board and its state stay in the repository's local Git metadata. A single loopback service is shared by workspaces of the same repository, while random workspace IDs, review IDs, and access tokens keep reviews separate. There is no hosted service, account, telemetry, screenshot capture, or runtime npm dependency.
 
 ### Requirements
 
 - Node.js 20 or newer.
+- A local Git repository. The skill reads the existing `.git` entry directly and never runs or initializes Git.
 - A local coding agent with browser or screenshot tooling, such as Playwright.
 - The application running locally in a state the agent can navigate.
 
@@ -67,10 +68,7 @@ The agent reads open, revision-bound comments from the current workspace. You do
 
 The first `before` image for each surface remains immutable. Republishing `after` increments the surface revision, resets Ready, and keeps comments attached to the revision the reviewer actually saw. An `expectedRevision` field prevents concurrent agents from overwriting a newer image.
 
-The agent creates source screenshots and the manifest in a temporary directory outside the repository, publishes copies, and removes those temporary files after publication. Persisted state and copied screenshots live in the user's local application-data directory:
-
-- macOS: `~/Library/Application Support/review-ui-changes/`
-- Linux: `$XDG_STATE_HOME/review-ui-changes/` or `~/.local/state/review-ui-changes/`
+The agent passes a manifest on stdin and may use source screenshots wherever its capture tooling creates them. Publication makes durable copies before returning, so the source files are no longer needed afterward. Persisted state and copied screenshots live under `.git/review-ui-changes/` in the repository's common Git directory. Linked worktrees share that directory, while the files remain outside the tracked working tree.
 
 Conductor workspaces are resolved using `CONDUCTOR_WORKSPACE_ID`; other local environments use the canonical project path. Agent sessions are deliberately not identities, so a later agent can continue the same review.
 
@@ -79,14 +77,14 @@ The shared server chooses an available port automatically and stops after four h
 ### Manual commands
 
 ```bash
-node skills/review-ui-changes/scripts/review.mjs publish /path/to/manifest.json
+node skills/review-ui-changes/scripts/review.mjs publish - < /path/to/manifest.json
 node skills/review-ui-changes/scripts/review.mjs feedback
 node skills/review-ui-changes/scripts/review.mjs address --comment <comment-id>
 node skills/review-ui-changes/scripts/review.mjs status
 node skills/review-ui-changes/scripts/review.mjs stop
 ```
 
-`stop` closes the shared service for every currently open local review but does not delete state or images. A later `publish` or `start` launches it again. After `start`, `status` prints fresh token-bearing URLs for persisted reviews in the current workspace.
+`stop` closes the repository's shared service for every currently open review but does not delete state or images. A later `publish` or `start` launches it again. After `start`, `status` prints fresh token-bearing URLs for persisted reviews in the current workspace.
 
 The first publication uses this manifest shape:
 
