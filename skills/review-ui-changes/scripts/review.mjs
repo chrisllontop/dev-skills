@@ -15,10 +15,9 @@ import {
 } from "node:fs/promises";
 import { createServer } from "node:http";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SKILL_DIR = resolve(dirname(SCRIPT_PATH), "..");
@@ -26,7 +25,6 @@ const ASSET_DIR = join(SKILL_DIR, "assets", "review-board");
 const LOOPBACK = "127.0.0.1";
 const PROTOCOL_VERSION = 2;
 const DEFAULT_IDLE_MINUTES = 240;
-const execFileAsync = promisify(execFile);
 
 const HELP = `review-ui-changes
 
@@ -105,23 +103,58 @@ function isInside(parent, child) {
   return pathFromParent === "" || (!pathFromParent.startsWith(`..${sep}`) && pathFromParent !== "..");
 }
 
+async function requireDirectory(directory, label) {
+  try {
+    const directoryInfo = await stat(directory);
+    if (!directoryInfo.isDirectory()) throw new Error(`${label} is not a directory: ${directory}`);
+    return await realpath(directory);
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error(`${label} does not exist: ${directory}`, { cause: error });
+    throw error;
+  }
+}
+
+async function existingGitDirectory(projectRoot) {
+  const dotGit = join(projectRoot, ".git");
+  let dotGitInfo;
+  try {
+    dotGitInfo = await stat(dotGit);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new Error(
+        `No .git entry exists in ${projectRoot}. This command does not initialize Git.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+
+  if (dotGitInfo.isDirectory()) return realpath(dotGit);
+  if (!dotGitInfo.isFile()) throw new Error(`The .git entry is not a file or directory: ${dotGit}`);
+
+  const pointer = (await readFile(dotGit, "utf8")).trim().match(/^gitdir:\s*(.+)$/i);
+  if (!pointer) throw new Error(`The .git worktree pointer is invalid: ${dotGit}`);
+  const worktreeGitDirectory = await requireDirectory(
+    resolve(projectRoot, pointer[1]),
+    "The .git worktree directory",
+  );
+
+  try {
+    const commonPointer = (await readFile(join(worktreeGitDirectory, "commondir"), "utf8")).trim();
+    if (!commonPointer) throw new Error(`The Git commondir file is empty: ${worktreeGitDirectory}`);
+    return requireDirectory(
+      resolve(worktreeGitDirectory, commonPointer),
+      "The common Git directory",
+    );
+  } catch (error) {
+    if (error.code === "ENOENT") return worktreeGitDirectory;
+    throw error;
+  }
+}
+
 async function defaultDataDirectory(projectRoot) {
   if (process.env.REVIEW_UI_DATA_DIR) return resolve(process.env.REVIEW_UI_DATA_DIR);
-  try {
-    const { stdout } = await execFileAsync(
-      "git",
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { cwd: projectRoot, encoding: "utf8" },
-    );
-    const gitCommonDirectory = stdout.trim();
-    if (!gitCommonDirectory) throw new Error("Git returned an empty common directory.");
-    return join(resolve(projectRoot, gitCommonDirectory), "review-ui-changes");
-  } catch (error) {
-    throw new Error(
-      `Could not locate the repository's Git directory from ${projectRoot}. This command does not initialize Git; run it from an existing Git project or explicitly set REVIEW_UI_DATA_DIR.`,
-      { cause: error },
-    );
-  }
+  return join(await existingGitDirectory(projectRoot), "review-ui-changes");
 }
 
 async function canonicalProjectRoot(value) {

@@ -18,7 +18,7 @@ node --version
 node <review-script> --help
 ```
 
-If the project is not already a Git repository, explain that repository-local persistence is unavailable and stop. Never initialize a repository for this skill. If Node or screenshot tooling is unavailable, explain the missing prerequisite and stop. Do not substitute imagined screenshots. Do not publish from a Conductor cloud workspace because its loopback URL is not reachable from the reviewer's Mac.
+If the project does not already have a `.git` entry, explain that repository-local persistence is unavailable and stop. Never run or initialize Git for this skill. If Node or screenshot tooling is unavailable, explain the missing prerequisite and stop. Do not substitute imagined screenshots. Do not publish from a Conductor cloud workspace because its loopback URL is not reachable from the reviewer's Mac.
 
 ## Publish a review
 

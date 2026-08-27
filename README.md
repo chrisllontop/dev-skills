@@ -39,7 +39,7 @@ The board and its state stay in the repository's local Git metadata. A single lo
 ### Requirements
 
 - Node.js 20 or newer.
-- A local Git repository. The skill uses existing Git metadata and never initializes a repository.
+- A local Git repository. The skill reads the existing `.git` entry directly and never runs or initializes Git.
 - A local coding agent with browser or screenshot tooling, such as Playwright.
 - The application running locally in a state the agent can navigate.
 

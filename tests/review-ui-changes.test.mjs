@@ -23,6 +23,7 @@ function environment(workspaceId) {
 function environmentWithDefaultStorage(workspaceId) {
   const result = environment(workspaceId);
   delete result.REVIEW_UI_DATA_DIR;
+  result.PATH = "";
   return result;
 }
 
@@ -90,11 +91,22 @@ try {
       { env: environmentWithDefaultStorage("workspace-b") },
     ),
     (error) => {
-      assert.match(error.stderr, /does not initialize Git/);
+      assert.match(error.stderr, /No \.git entry exists/);
       return true;
     },
   );
   await assert.rejects(stat(join(fixtureB.projectRoot, ".git")), { code: "ENOENT" });
+  await mkdir(join(fixtureB.projectRoot, ".git"));
+  const directoryOnlyStatus = await execFileAsync(
+    process.execPath,
+    [reviewScript, "status", "--root", fixtureB.projectRoot],
+    { env: environmentWithDefaultStorage("workspace-b") },
+  );
+  assert.equal(
+    JSON.parse(directoryOnlyStatus.stdout).dataDirectory,
+    join(await realpath(fixtureB.projectRoot), ".git", "review-ui-changes"),
+    "an existing .git directory should be sufficient without running Git",
+  );
 
   await execFileAsync("git", ["init", "--quiet"], { cwd: fixtureA.projectRoot });
   const defaultStorageStatus = await execFileAsync(
