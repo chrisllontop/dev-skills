@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review UI Changes"
+  short_description: "Review UI changes without opening the app"
+  default_prompt: "Use $review-ui-changes to publish before-and-after screenshots for visual review."
