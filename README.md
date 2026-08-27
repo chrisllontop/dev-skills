@@ -1,6 +1,6 @@
-# Agent Skills
+# Frontend Skills
 
-A collection of open Agent Skills. Every directory under `skills/` is self-contained and can be installed independently in a compatible coding agent.
+A collection of open Agent Skills for frontend development. Every directory under `skills/` is self-contained and can be installed independently in a compatible coding agent.
 
 ## Skills
 
@@ -13,13 +13,13 @@ A collection of open Agent Skills. Every directory under `skills/` is self-conta
 List or select skills from this repository with the open skills CLI:
 
 ```bash
-npx skills add chrisllontop/review-ui-changes
+npx skills add chrisllontop/frontend-skills
 ```
 
 Install a specific skill:
 
 ```bash
-npx skills add chrisllontop/review-ui-changes --skill review-ui-changes
+npx skills add chrisllontop/frontend-skills --skill review-ui-changes
 ```
 
 Add `-g` for a user-level installation, or use `-a codex`, `-a claude-code`, `-a cursor`, or another supported agent selector.
@@ -27,7 +27,7 @@ Add `-g` for a user-level installation, or use `-a codex`, `-a claude-code`, `-a
 In Codex, the built-in installer can install the skill directory directly:
 
 ```text
-$skill-installer install https://github.com/chrisllontop/review-ui-changes/tree/main/skills/review-ui-changes
+$skill-installer install https://github.com/chrisllontop/frontend-skills/tree/main/skills/review-ui-changes
 ```
 
 ## `review-ui-changes`
