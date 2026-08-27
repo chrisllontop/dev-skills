@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -20,6 +20,12 @@ function environment(workspaceId) {
   };
 }
 
+function environmentWithDefaultStorage(workspaceId) {
+  const result = environment(workspaceId);
+  delete result.REVIEW_UI_DATA_DIR;
+  return result;
+}
+
 async function run(workspaceId, argumentsList, { reject = false } = {}) {
   try {
     const result = await execFileAsync(process.execPath, [reviewScript, ...argumentsList], {
@@ -32,6 +38,27 @@ async function run(workspaceId, argumentsList, { reject = false } = {}) {
     if (!reject) throw error;
     return error;
   }
+}
+
+async function runWithInput(workspaceId, argumentsList, input) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [reviewScript, ...argumentsList], {
+      env: environment(workspaceId),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.once("error", rejectRun);
+    child.once("close", (code) => {
+      const stdoutText = Buffer.concat(stdout).toString("utf8");
+      const stderrText = Buffer.concat(stderr).toString("utf8");
+      if (code === 0) resolveRun(JSON.parse(stdoutText));
+      else rejectRun(new Error(`Command failed (${code}): ${stderrText}`));
+    });
+    child.stdin.end(input);
+  });
 }
 
 async function createFixture(workspaceId, batchId) {
@@ -55,6 +82,61 @@ try {
     createFixture("workspace-a", "batch-a"),
     createFixture("workspace-b", "batch-b"),
   ]);
+
+  await assert.rejects(
+    execFileAsync(
+      process.execPath,
+      [reviewScript, "status", "--root", fixtureB.projectRoot],
+      { env: environmentWithDefaultStorage("workspace-b") },
+    ),
+    (error) => {
+      assert.match(error.stderr, /does not initialize Git/);
+      return true;
+    },
+  );
+  await assert.rejects(stat(join(fixtureB.projectRoot, ".git")), { code: "ENOENT" });
+
+  await execFileAsync("git", ["init", "--quiet"], { cwd: fixtureA.projectRoot });
+  const defaultStorageStatus = await execFileAsync(
+    process.execPath,
+    [reviewScript, "status", "--root", fixtureA.projectRoot],
+    { env: environmentWithDefaultStorage("workspace-a") },
+  );
+  assert.equal(
+    JSON.parse(defaultStorageStatus.stdout).dataDirectory,
+    join(await realpath(fixtureA.projectRoot), ".git", "review-ui-changes"),
+  );
+  await execFileAsync(
+    "git",
+    [
+      "-c",
+      "user.name=Review UI Test",
+      "-c",
+      "user.email=review-ui@example.invalid",
+      "commit",
+      "--allow-empty",
+      "--quiet",
+      "-m",
+      "Initialize fixture",
+    ],
+    { cwd: fixtureA.projectRoot },
+  );
+  const linkedWorktree = join(temporaryDirectory, "workspace-a-linked");
+  await execFileAsync(
+    "git",
+    ["worktree", "add", "--quiet", "--detach", linkedWorktree],
+    { cwd: fixtureA.projectRoot },
+  );
+  const linkedStorageStatus = await execFileAsync(
+    process.execPath,
+    [reviewScript, "status", "--root", linkedWorktree],
+    { env: environmentWithDefaultStorage("workspace-a-linked") },
+  );
+  assert.equal(
+    JSON.parse(linkedStorageStatus.stdout).dataDirectory,
+    JSON.parse(defaultStorageStatus.stdout).dataDirectory,
+    "linked worktrees should share repository-local review storage",
+  );
 
   const [publishedA, publishedB] = await Promise.all([
     run("workspace-a", ["publish", fixtureA.manifest, "--root", fixtureA.projectRoot]),
@@ -126,6 +208,24 @@ try {
     ["publish", nextManifest, "--root", fixtureA.projectRoot],
   );
   assert.equal(revision.surfaces[0].revision, 2);
+
+  const stdinAfter = join(fixtureA.projectRoot, "after-r3.png");
+  await writeFile(stdinAfter, "after-r3");
+  const stdinRevision = await runWithInput(
+    "workspace-a",
+    ["publish", "-", "--root", fixtureA.projectRoot],
+    JSON.stringify({
+      id: "batch-a",
+      title: "Batch batch-a",
+      surfaces: [{
+        id: "home",
+        title: "Home",
+        after: "after-r3.png",
+        expectedRevision: 2,
+      }],
+    }),
+  );
+  assert.equal(stdinRevision.surfaces[0].revision, 3);
 
   const staleReadyResponse = await fetch(new URL(`/api/ready${urlA.search}`, urlA.origin), {
     method: "POST",
