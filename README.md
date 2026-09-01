@@ -32,7 +32,7 @@ $skill-installer install https://github.com/chrisllontop/frontend-skills/tree/ma
 
 ## `review-ui-changes`
 
-The coding agent captures screenshots with the browser tooling it already has, publishes before-and-after pairs to a local board, and ends its turn. You review the images asynchronously, mark surfaces ready, or leave comments. On the next turn, the agent reads only unresolved feedback, makes corrections, republishes, and marks handled comments addressed.
+The coding agent captures screenshots with the browser tooling it already has, publishes before-and-after pairs to a local board, and ends its turn. You review the images asynchronously, mark surfaces ready, or leave comments. On the next turn, the agent reads only unresolved feedback, makes corrections, republishes, replies to every comment with the outcome, and marks handled comments addressed.
 
 The board and its state stay in the repository's local Git metadata. A single loopback service is shared by workspaces of the same repository, while random workspace IDs, review IDs, and access tokens keep reviews separate. There is no hosted service, account, telemetry, screenshot capture, or runtime npm dependency.
 
@@ -62,7 +62,7 @@ The board does not push events into the agent's active turn. After leaving feedb
 I left feedback on the visual review.
 ```
 
-The agent reads open, revision-bound comments from the current workspace. You do not need to paste the review URL, comment text, or a session code.
+The agent reads open, revision-bound comments from the current workspace. You do not need to paste the review URL, comment text, or a session code. Its responses appear directly beneath each original comment; the board checks for new responses automatically while it remains open.
 
 ### Persistence and isolation
 
@@ -79,12 +79,13 @@ The shared server chooses an available port automatically and stops after four h
 ```bash
 node skills/review-ui-changes/scripts/review.mjs publish - < /path/to/manifest.json
 node skills/review-ui-changes/scripts/review.mjs feedback
+node skills/review-ui-changes/scripts/review.mjs reply --comment <comment-id> --body "Updated in revision 2."
 node skills/review-ui-changes/scripts/review.mjs address --comment <comment-id>
 node skills/review-ui-changes/scripts/review.mjs status
 node skills/review-ui-changes/scripts/review.mjs stop
 ```
 
-`stop` closes the repository's shared service for every currently open review but does not delete state or images. A later `publish` or `start` launches it again. After `start`, `status` prints fresh token-bearing URLs for persisted reviews in the current workspace.
+`reply` persists an agent response on its original comment. Pass `--body -` to read a multiline response from stdin. A comment must have at least one agent response before `address` can resolve it. `stop` closes the repository's shared service for every currently open review but does not delete state or images. A later `publish` or `start` launches it again. After `start`, `status` prints fresh token-bearing URLs for persisted reviews in the current workspace.
 
 The first publication uses this manifest shape:
 

@@ -1,6 +1,6 @@
 ---
 name: review-ui-changes
-description: Publish and iterate on asynchronous local visual reviews from before-and-after screenshots. Use when making or auditing UI changes across one or more static surfaces and a human needs to review images, mark surfaces ready, leave revision-bound comments, or send unresolved visual feedback back to the coding agent. Requires a separate browser or screenshot capability and a running app; does not test interactions or visual regressions.
+description: Publish and iterate on asynchronous local visual reviews from before-and-after screenshots. Use when making or auditing UI changes across one or more static surfaces and a human needs to review images, mark surfaces ready, leave revision-bound comments, receive agent replies, or send unresolved visual feedback back to the coding agent. Requires a separate browser or screenshot capability and a running app; does not test interactions or visual regressions.
 ---
 
 # Review UI Changes
@@ -66,7 +66,7 @@ The first published `before` image for a surface is immutable. Republishing the 
 
 For every existing surface, set `expectedRevision` to the current revision returned by `publish` or `feedback`. A conflicting publication fails instead of overwriting another agent's revision.
 
-Ready surfaces are hidden from the board's default view. The reviewer can use **Show approved** to inspect or reopen them. Approval and comments are persisted under the repository's common Git directory and associated with the current workspace; the reviewer does not need to send a URL or session identifier back to the agent.
+Ready surfaces are hidden from the board's default view. The reviewer can use **Show approved** to inspect or reopen them. Approval, comments, and agent replies are persisted under the repository's common Git directory and associated with the current workspace; the reviewer does not need to send a URL or session identifier back to the agent. Replies appear beneath their original comment and the board checks for them automatically while it is open.
 
 On later revisions, include only surfaces whose `after` image actually changed. Unchanged Ready surfaces must be omitted from the manifest so they keep their approved revision and remain hidden. A previously Ready surface should reappear only when its image changed and therefore needs fresh approval.
 
@@ -78,7 +78,7 @@ When the user says feedback is ready, read open comments once:
 node <review-script> feedback
 ```
 
-The JSON output includes the comment ID, the revision the reviewer saw, the current revision, and `stale`. Handle only returned open comments.
+The JSON output includes the comment ID, the revision the reviewer saw, the current revision, `stale`, and any replies already sent for that comment. Handle only returned open comments.
 
 For each actionable comment:
 
@@ -86,13 +86,21 @@ For each actionable comment:
 2. Apply the correction.
 3. Capture a new `after` screenshot under the same conditions.
 4. Republish only the changed surface under the same batch and surface ID, without a new `before`, and set `expectedRevision` to `currentRevision`. Do not include unchanged Ready surfaces.
-5. Only after successful publication, mark the handled comment addressed:
+5. Only after successful publication, reply to the original comment with a concise, concrete summary of what changed and the new revision. Use `--body -` for a multiline reply:
+
+```bash
+node <review-script> reply --comment <comment-id> --body - <<'REPLY'
+Updated the spacing and republished this surface as revision 2.
+REPLY
+```
+
+6. After the reply succeeds, mark the handled comment addressed:
 
 ```bash
 node <review-script> address --comment <comment-id>
 ```
 
-If a comment is stale, verify whether it still applies to the current image before editing. Do not silently address ambiguous or unactionable feedback.
+Every handled comment must receive its own reply; `address` rejects comments that do not have one. If no visual change is needed, reply with the reason or answer before addressing it. If feedback is ambiguous, needs a reviewer decision, or cannot be acted on, reply with the specific question or blocker and leave the comment open. If a comment is stale, verify whether it still applies to the current image before editing and explain the outcome in its reply. Never silently address feedback.
 
 ## Maintain scope
 
