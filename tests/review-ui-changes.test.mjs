@@ -169,6 +169,7 @@ try {
   const stateResponse = await fetch(new URL(`/api/state${urlA.search}`, urlA.origin));
   assert.equal(stateResponse.status, 200);
   const state = await stateResponse.json();
+  assert.equal(state.schemaVersion, 2);
   assert.equal(state.batches[0].id, "batch-a");
   const mediaResponse = await fetch(new URL(state.batches[0].surfaces[0].before, urlA.origin));
   assert.equal(mediaResponse.status, 200);
@@ -193,6 +194,7 @@ try {
   const feedback = await run("workspace-a", ["feedback", "--root", fixtureA.projectRoot]);
   assert.equal(feedback[0].id, comment.id);
   assert.equal(feedback[0].currentRevision, 1);
+  assert.deepEqual(feedback[0].replies, []);
 
   const nextAfter = join(fixtureA.sourceDirectory, "after-r2.png");
   await writeFile(nextAfter, "after-r2");
@@ -246,6 +248,30 @@ try {
   });
   assert.equal(staleReadyResponse.status, 409);
 
+  const missingReply = await run(
+    "workspace-a",
+    ["address", "--root", fixtureA.projectRoot, "--comment", comment.id],
+    { reject: true },
+  );
+  assert.match(missingReply.stderr, /requires an agent reply/);
+
+  const replyBody = "Increased spacing and republished this surface as revision 3.";
+  const replied = await runWithInput(
+    "workspace-a",
+    ["reply", "--root", fixtureA.projectRoot, "--comment", comment.id, "--body", "-"],
+    replyBody,
+  );
+  assert.equal(replied.commentId, comment.id);
+  assert.equal(replied.reply.author, "agent");
+  assert.equal(replied.reply.body, replyBody);
+
+  const feedbackWithReply = await run("workspace-a", ["feedback", "--root", fixtureA.projectRoot]);
+  assert.equal(feedbackWithReply[0].replies[0].id, replied.reply.id);
+  const stateWithReply = await fetch(
+    new URL(`/api/state${urlA.search}`, urlA.origin),
+  ).then((response) => response.json());
+  assert.equal(stateWithReply.comments[0].replies[0].body, replyBody);
+
   await run("workspace-a", ["address", "--root", fixtureA.projectRoot, "--comment", comment.id]);
   assert.deepEqual(await run("workspace-a", ["feedback", "--root", fixtureA.projectRoot]), []);
 
@@ -259,7 +285,7 @@ try {
     "workspace-a",
     ["start", "--root", fixtureA.projectRoot, "--idle-minutes", "0.005"],
   );
-  assert.equal(restarted.protocolVersion, 2);
+  assert.equal(restarted.protocolVersion, 3);
   await new Promise((resolveWait) => setTimeout(resolveWait, 700));
   assert.equal(
     (await run("workspace-a", ["status", "--root", fixtureA.projectRoot])).running,

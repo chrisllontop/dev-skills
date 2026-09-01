@@ -23,7 +23,7 @@ const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const SKILL_DIR = resolve(dirname(SCRIPT_PATH), "..");
 const ASSET_DIR = join(SKILL_DIR, "assets", "review-board");
 const LOOPBACK = "127.0.0.1";
-const PROTOCOL_VERSION = 2;
+const PROTOCOL_VERSION = 3;
 const DEFAULT_IDLE_MINUTES = 240;
 
 const HELP = `review-ui-changes
@@ -33,6 +33,7 @@ Publish local before/after UI reviews and read revision-bound feedback.
 Usage:
   node review.mjs publish <manifest.json|-> [--root <project>] [--port <port>]
   node review.mjs feedback [--root <project>] [--batch <batch-id>]
+  node review.mjs reply --comment <comment-id> --body <text|->
   node review.mjs address --comment <comment-id> [--comment <id> ...]
   node review.mjs start [--port <port>] [--idle-minutes <minutes>]
   node review.mjs stop
@@ -349,12 +350,12 @@ function imageExtension(filePath) {
   return extension;
 }
 
-async function readManifestFromStdin() {
+async function readStdin(maxBytes, label) {
   const chunks = [];
   let length = 0;
   for await (const chunk of process.stdin) {
     length += chunk.length;
-    if (length > 1024 * 1024) throw new Error("Manifest is too large.");
+    if (length > maxBytes) throw new Error(`${label} is too large.`);
     chunks.push(chunk);
   }
   return Buffer.concat(chunks).toString("utf8");
@@ -409,7 +410,7 @@ async function publish(manifestPathValue, args, context) {
   const manifestPath = manifestFromStdin ? null : resolve(manifestPathValue);
   const manifestDirectory = manifestFromStdin ? context.projectRoot : dirname(manifestPath);
   const manifestJson = manifestFromStdin
-    ? await readManifestFromStdin()
+    ? await readStdin(1024 * 1024, "Manifest")
     : await readFile(manifestPath, "utf8");
   const manifest = JSON.parse(manifestJson);
   const { batchId, batchTitle } = validateManifest(manifest);
@@ -530,10 +531,12 @@ function publicState(review) {
       })),
   };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     reviewId: review.id,
     batches: [batch],
-    comments: [...review.comments].sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+    comments: review.comments
+      .map((comment) => ({ ...comment, replies: [...(comment.replies ?? [])] }))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
   };
 }
 
@@ -560,8 +563,43 @@ async function feedback(context, batchFilter) {
           stale: surface ? surface.revision !== comment.revision : true,
           body: comment.body,
           createdAt: comment.createdAt,
+          replies: [...(comment.replies ?? [])],
         };
       }));
+}
+
+async function replyToComment(context, commentId, bodyValue) {
+  if (!commentId) throw new Error("reply requires --comment <comment-id>.");
+  if (bodyValue === undefined || bodyValue === true) {
+    throw new Error("reply requires --body <text|->.");
+  }
+  const body = assertText(
+    bodyValue === "-" ? await readStdin(64 * 1024, "Reply") : bodyValue,
+    "Reply",
+    4000,
+  );
+
+  return mutateDatabase(context, (database) => {
+    const workspace = workspaceForContext(database, context);
+    if (!workspace) throw new Error("No visual reviews exist for this workspace.");
+
+    for (const review of database.reviews.filter((candidate) => candidate.workspaceId === workspace.id)) {
+      const comment = review.comments.find((candidate) => candidate.id === commentId);
+      if (!comment) continue;
+      const reply = {
+        id: randomUUID(),
+        author: "agent",
+        body,
+        createdAt: new Date().toISOString(),
+      };
+      comment.replies ??= [];
+      comment.replies.push(reply);
+      review.updatedAt = reply.createdAt;
+      return { commentId, reply };
+    }
+
+    throw new Error(`Unknown comment in this workspace: ${commentId}`);
+  });
 }
 
 async function addressComments(context, ids) {
@@ -583,6 +621,11 @@ async function addressComments(context, ids) {
       }
       if (!found) throw new Error(`Unknown comment in this workspace: ${id}`);
       if (found.comment.status === "open") {
+        if (!(found.comment.replies?.length > 0)) {
+          throw new Error(
+            `Comment ${id} requires an agent reply before it can be addressed. Use the reply command first.`,
+          );
+        }
         found.comment.status = "addressed";
         found.comment.addressedAt = addressedAt;
         found.review.updatedAt = addressedAt;
@@ -696,6 +739,7 @@ async function handleApi(request, response, url, context) {
         status: "open",
         createdAt: new Date().toISOString(),
         addressedAt: null,
+        replies: [],
       };
       review.comments.push(created);
       review.updatedAt = created.createdAt;
@@ -993,6 +1037,12 @@ async function main() {
     result = await publish(args.positional[0], args, context);
   } else if (command === "feedback") {
     result = await feedback(context, option(args, "--batch", null));
+  } else if (command === "reply") {
+    result = await replyToComment(
+      context,
+      option(args, "--comment", null),
+      option(args, "--body", undefined),
+    );
   } else if (command === "address") {
     result = { addressed: await addressComments(context, options(args, "--comment")) };
   } else if (command === "start") {

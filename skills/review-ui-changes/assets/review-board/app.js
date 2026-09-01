@@ -7,6 +7,8 @@ const query = new URLSearchParams(window.location.search);
 const reviewId = query.get("review");
 const accessToken = query.get("token");
 let state = null;
+let stateSignature = null;
+let loadingPromise = null;
 let selectedBatchId = query.get("batch");
 let showApproved = query.get("approved") === "1";
 
@@ -104,9 +106,25 @@ function renderComment(comment, currentRevision) {
   const stale = comment.revision !== currentRevision;
   const details = [comment.status === "open" ? "Open" : "Addressed", `Revision ${comment.revision}`];
   if (stale) details.push("Older image");
+  const replies = comment.replies ?? [];
   return element("article", { className: `comment ${comment.status}` }, [
-    element("div", { className: "comment-meta", text: details.join(" · ") }),
-    element("p", { text: comment.body }),
+    element("div", { className: "comment-content" }, [
+      element("div", { className: "comment-meta", text: details.join(" · ") }),
+      element("p", { text: comment.body }),
+    ]),
+    ...(replies.length
+      ? [element(
+          "div",
+          { className: "agent-replies", "aria-label": "Agent responses" },
+          replies.map((reply) => element("div", { className: "agent-reply" }, [
+            element("div", {
+              className: "agent-reply-meta",
+              text: `Agent response · ${new Date(reply.createdAt).toLocaleString()}`,
+            }),
+            element("p", { text: reply.body }),
+          ])),
+        )]
+      : []),
   ]);
 }
 
@@ -356,25 +374,48 @@ function render() {
       icon("message"),
       element("p", {}, [
         element("strong", { text: "Finished reviewing?" }),
-        document.createTextNode(" Return to your agent and say “Feedback is ready.” No link or session code is needed."),
+        document.createTextNode(" Return to your agent and say “Feedback is ready.” Agent responses will appear here automatically."),
       ]),
     ]),
   );
 }
 
-async function load() {
-  try {
-    state = await request("/api/state");
-    render();
-  } catch (error) {
-    summary.textContent = "Unable to load review";
-    content.replaceChildren(
-      element("div", { className: "empty-state" }, [
-        element("h2", { text: "The review could not be loaded" }),
-        element("p", { text: error.message }),
-      ]),
-    );
-  }
+function hasDraft() {
+  return [...document.querySelectorAll("textarea")].some((textarea) => textarea.value.trim());
 }
 
-load();
+async function load({ silent = false } = {}) {
+  if (loadingPromise) return loadingPromise;
+  loadingPromise = (async () => {
+    try {
+      const nextState = await request("/api/state");
+      const nextSignature = JSON.stringify(nextState);
+      if (nextSignature !== stateSignature) {
+        state = nextState;
+        stateSignature = nextSignature;
+        render();
+      }
+    } catch (error) {
+      if (silent) return;
+      summary.textContent = "Unable to load review";
+      content.replaceChildren(
+        element("div", { className: "empty-state" }, [
+          element("h2", { text: "The review could not be loaded" }),
+          element("p", { text: error.message }),
+        ]),
+      );
+    } finally {
+      loadingPromise = null;
+    }
+  })();
+  return loadingPromise;
+}
+
+function refreshIfIdle() {
+  if (!document.hidden && !hasDraft()) void load({ silent: true });
+}
+
+window.setInterval(refreshIfIdle, 5000);
+window.addEventListener("focus", refreshIfIdle);
+document.addEventListener("visibilitychange", refreshIfIdle);
+void load();

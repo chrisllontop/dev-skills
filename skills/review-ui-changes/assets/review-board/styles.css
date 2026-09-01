@@ -22,6 +22,8 @@
   --success-muted: #10291c;
   --warning: #e5a044;
   --warning-muted: #2b2116;
+  --agent: #8fb4ff;
+  --agent-muted: #151d2c;
   --ring: rgb(244 244 245 / 28%);
 }
 
@@ -492,10 +494,14 @@ main {
 }
 
 .comment {
-  padding: 11px 12px;
+  overflow: hidden;
   border: 1px solid #4d3923;
   border-radius: 8px;
   background: var(--warning-muted);
+}
+
+.comment-content {
+  padding: 11px 12px;
 }
 
 .comment.addressed {
@@ -522,6 +528,33 @@ main {
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.agent-replies {
+  display: grid;
+  border-top: 1px solid #35435d;
+  background: var(--agent-muted);
+}
+
+.agent-reply {
+  padding: 10px 12px 11px;
+}
+
+.agent-reply + .agent-reply {
+  border-top: 1px solid #29354b;
+}
+
+.agent-reply-meta {
+  margin-bottom: 5px;
+  color: var(--agent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.comment.addressed .agent-reply p {
+  color: #c4d4f1;
 }
 
 .comment-form {
