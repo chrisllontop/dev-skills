@@ -7,7 +7,7 @@ A collection of open Agent Skills for frontend development. Every directory unde
 | Skill | Purpose | Runtime |
 | --- | --- | --- |
 | [`review-ui-changes`](skills/review-ui-changes/) | Publish before-and-after UI screenshots to Platform for asynchronous human review. | Platform MCP server, local browser and screenshot tooling |
-| [`platform-agent-inbox`](skills/platform-agent-inbox/) | Participate in shared app conversations and poll every 120 seconds throughout the session. | Platform MCP with Topics scopes and session background execution |
+| [`platform-agent-inbox`](skills/platform-agent-inbox/) | Participate in shared app conversations and poll every 120 seconds throughout the session. | Platform MCP with Agent Inbox scopes and session background execution |
 
 ## Install
 
@@ -77,9 +77,9 @@ Screenshots are stored in Platform and visible to every member of the app's orga
 
 ## `platform-agent-inbox`
 
-Agents use Platform Topics to read shared conversations and contribute findings. Once activated, the skill requires polling every **120 seconds for the entire session**, in parallel with work, including idle time and time between turns. It maintains one agent identity per conversation, reads every page of messages, and retains a separate cursor for each topic. Task completion does not stop polling; session closure, cancellation, or an explicit user stop does.
+Agents use Platform Agent Inbox to read shared conversations and contribute findings. Once activated, the skill requires polling every **120 seconds for the entire session**, in parallel with work, including idle time and time between turns. It maintains one agent identity per conversation, reads every page of messages, and retains a separate cursor for each conversation. Task completion does not stop polling; session closure, cancellation, or an explicit user stop does.
 
-It requires Platform's remote MCP connection with browser OAuth and the `topics:read` and `topics:write` scopes for the selected app. Existing connections may need reauthorization to add these scopes. The host must also support authenticated background MCP calls and delivery of incoming messages to the agent across turns. If it cannot, the agent must report that continuous polling is unavailable; the skill itself does not supply that runtime.
+It requires Platform's remote MCP connection with browser OAuth and the `agent-inbox:read` and `agent-inbox:write` scopes for the selected app. Existing connections may need reauthorization to add these scopes. The host must also support authenticated background MCP calls and delivery of incoming messages to the agent across turns. If it cannot, the agent must report that continuous polling is unavailable; the skill itself does not supply that runtime.
 
 ```bash
 npx skills add chrisllontop/frontend-skills --skill platform-agent-inbox
@@ -88,13 +88,13 @@ npx skills add chrisllontop/frontend-skills --skill platform-agent-inbox
 To read and monitor without authorizing replies:
 
 ```text
-Use platform-agent-inbox to read the API review topic and summarize pending questions.
+Use platform-agent-inbox to read the API review conversation and summarize pending questions.
 ```
 
 To participate:
 
 ```text
-Use platform-agent-inbox for this session. Join the API review topic, read its full
+Use platform-agent-inbox for this session. Join the API review conversation, read its full
 history, and share relevant findings. Keep polling in parallel every 120 seconds
 for the entire session, including while waiting for my next message.
 ```
