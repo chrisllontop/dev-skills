@@ -6,7 +6,8 @@ A collection of open Agent Skills for frontend development. Every directory unde
 
 | Skill | Purpose | Runtime |
 | --- | --- | --- |
-| [`review-ui-changes`](skills/review-ui-changes/) | Review before-and-after UI screenshots asynchronously on a local board. | Node.js 20+, local browser and screenshot tooling |
+| [`review-ui-changes`](skills/review-ui-changes/) | Publish before-and-after UI screenshots to Platform for asynchronous human review. | Platform MCP server, local browser and screenshot tooling |
+| [`platform-agent-inbox`](skills/platform-agent-inbox/) | Participate in shared app conversations and poll every 120 seconds throughout the session. | Platform MCP with Topics scopes and session background execution |
 
 ## Install
 
@@ -32,15 +33,15 @@ $skill-installer install https://github.com/chrisllontop/frontend-skills/tree/ma
 
 ## `review-ui-changes`
 
-The coding agent captures screenshots with the browser tooling it already has, publishes before-and-after pairs to a local board, and ends its turn. You review the images asynchronously, mark surfaces ready, or leave comments. On the next turn, the agent reads only unresolved feedback, makes corrections, republishes, replies to every comment with the outcome, and marks handled comments addressed.
+The coding agent captures screenshots with the browser tooling it already has, publishes before-and-after pairs to Platform, hands over a link, and ends its turn. You review the images whenever you get to them and leave comments on any surface. On the next turn, the agent reads only unresolved feedback, makes corrections, republishes, replies to every comment with the outcome, and marks handled comments resolved.
 
-The board and its state stay in the repository's local Git metadata. A single loopback service is shared by workspaces of the same repository, while random workspace IDs, review IDs, and access tokens keep reviews separate. There is no hosted service, account, telemetry, screenshot capture, or runtime npm dependency.
+Reviews, screenshots, and the whole comment thread live in Platform under the app being reviewed, so the same review is reachable from any machine or phone, and from cloud workspaces.
 
 ### Requirements
 
-- Node.js 20 or newer.
-- A local Git repository. The skill reads the existing `.git` entry directly and never runs or initializes Git.
+- The [Platform](https://platform.rhn.dev) MCP server, connected and bound to the app under review, with the `reviews:read` and `reviews:write` scopes.
 - A local coding agent with browser or screenshot tooling, such as Playwright.
+- `curl`, used to upload the screenshots without routing image bytes through the model's context.
 - The application running locally in a state the agent can navigate.
 
 The skill does not install or configure screenshot tooling.
@@ -54,76 +55,51 @@ Use the review-ui-changes skill for this work. Capture every empty state before
 changing it, make the requested corrections, and publish the review when done.
 ```
 
-The agent returns a token-bearing loopback URL such as `http://127.0.0.1:53184/?review=…&token=…&batch=empty-states`. Keep the complete URL private. Marking a surface Ready hides it from the default view; use **Show approved** to inspect or reopen approved surfaces.
-
-The board does not push events into the agent's active turn. After leaving feedback, return to the chat and send a short signal:
+The agent returns a Platform link to the review. After leaving feedback, return to the chat and send a short signal:
 
 ```text
 I left feedback on the visual review.
 ```
 
-The agent reads open, revision-bound comments from the current workspace. You do not need to paste the review URL, comment text, or a session code. Its responses appear directly beneath each original comment; the board checks for new responses automatically while it remains open.
+The agent reads the unresolved comments through Platform, so you do not need to paste the link, the comment text, or a session code. Its answers appear directly beneath each original comment.
 
-### Persistence and isolation
+### Revisions
 
-The first `before` image for each surface remains immutable. Republishing `after` increments the surface revision, resets Ready, and keeps comments attached to the revision the reviewer actually saw. An `expectedRevision` field prevents concurrent agents from overwriting a newer image.
+The first `before` image for each surface is immutable. Republishing `after` increments the surface revision and keeps comments attached to the revision the reviewer actually saw, which is reported back to the agent as `stale` when it no longer matches. An `expectedRevision` field prevents concurrent agents from overwriting a newer image.
 
-The agent passes a manifest on stdin and may use source screenshots wherever its capture tooling creates them. Publication makes durable copies before returning, so the source files are no longer needed afterward. Persisted state and copied screenshots live under `.git/review-ui-changes/` in the repository's common Git directory. Linked worktrees share that directory, while the files remain outside the tracked working tree.
-
-Conductor workspaces are resolved using `CONDUCTOR_WORKSPACE_ID`; other local environments use the canonical project path. Agent sessions are deliberately not identities, so a later agent can continue the same review.
-
-The shared server chooses an available port automatically and stops after four hours without requests by default. Persisted reviews remain available after it stops.
-
-### Manual commands
-
-```bash
-node skills/review-ui-changes/scripts/review.mjs publish - < /path/to/manifest.json
-node skills/review-ui-changes/scripts/review.mjs feedback
-node skills/review-ui-changes/scripts/review.mjs reply --comment <comment-id> --body "Updated in revision 2."
-node skills/review-ui-changes/scripts/review.mjs address --comment <comment-id>
-node skills/review-ui-changes/scripts/review.mjs status
-node skills/review-ui-changes/scripts/review.mjs stop
-```
-
-`reply` persists an agent response on its original comment. Pass `--body -` to read a multiline response from stdin. A comment must have at least one agent response before `address` can resolve it. `stop` closes the repository's shared service for every currently open review but does not delete state or images. A later `publish` or `start` launches it again. After `start`, `status` prints fresh token-bearing URLs for persisted reviews in the current workspace.
-
-The first publication uses this manifest shape:
-
-```json
-{
-  "id": "empty-states",
-  "title": "Empty states",
-  "surfaces": [
-    {
-      "id": "courses-empty",
-      "title": "Courses / empty",
-      "before": "/path/to/courses-before.png",
-      "after": "/path/to/courses-after.png"
-    }
-  ]
-}
-```
-
-On a later revision, omit `before` and include the current revision:
-
-```json
-{
-  "id": "empty-states",
-  "title": "Empty states",
-  "surfaces": [
-    {
-      "id": "courses-empty",
-      "title": "Courses / empty",
-      "after": "/path/to/courses-after-r2.png",
-      "expectedRevision": 1
-    }
-  ]
-}
-```
+Screenshots never pass through the model's context: `reviews_publish` returns single-use upload URLs that expire in 15 minutes, and the agent uploads each file with `curl --upload-file`.
 
 ### Scope
 
 `review-ui-changes` supports human judgment of static screenshots. It does not capture images, run in CI, maintain cross-session regression baselines, or cover hover, focus, open dropdowns, transitions, and other interactive states. It complements accessibility, interaction, and visual-regression testing.
+
+Screenshots are stored in Platform and visible to every member of the app's organization. Do not publish images containing real customer data or secrets.
+
+## `platform-agent-inbox`
+
+Agents use Platform Topics to read shared conversations and contribute findings. Once activated, the skill requires polling every **120 seconds for the entire session**, in parallel with work, including idle time and time between turns. It maintains one agent identity per conversation, reads every page of messages, and retains a separate cursor for each topic. Task completion does not stop polling; session closure, cancellation, or an explicit user stop does.
+
+It requires Platform's remote MCP connection with browser OAuth and the `topics:read` and `topics:write` scopes for the selected app. Existing connections may need reauthorization to add these scopes. The host must also support authenticated background MCP calls and delivery of incoming messages to the agent across turns. If it cannot, the agent must report that continuous polling is unavailable; the skill itself does not supply that runtime.
+
+```bash
+npx skills add chrisllontop/frontend-skills --skill platform-agent-inbox
+```
+
+To read and monitor without authorizing replies:
+
+```text
+Use platform-agent-inbox to read the API review topic and summarize pending questions.
+```
+
+To participate:
+
+```text
+Use platform-agent-inbox for this session. Join the API review topic, read its full
+history, and share relevant findings. Keep polling in parallel every 120 seconds
+for the entire session, including while waiting for my next message.
+```
+
+The 120-second interval takes precedence over the server's suggested interval without changing app-wide settings. Transient read failures are checked again on the next cycle; failed sends are not automatically retried. Messages are shared across the app and cannot be edited or deleted.
 
 ## Repository conventions
 
@@ -143,16 +119,16 @@ For every new skill:
 2. Keep the folder independently installable; do not import runtime files from another skill or the repository root.
 3. Put host-neutral instructions in `SKILL.md` and host-specific metadata in optional host directories.
 4. Add the skill to the catalog and add focused tests under `tests/` when it contains executable behavior.
-5. Validate the skill with `skills-ref` and run its focused tests.
+5. Validate the skill with `skills-ref`.
 
 ## Development
 
 ```bash
 skills-ref validate skills/review-ui-changes
-npm test
+skills-ref validate skills/platform-agent-inbox
 ```
 
-Install `skills-ref` from the [Agent Skills reference repository](https://github.com/agentskills/agentskills/tree/main/skills-ref). Validate each directory under `skills/` individually. `npm test` discovers every `tests/*.test.mjs` file and verifies executable behavior separately from the skill format.
+Install `skills-ref` from the [Agent Skills reference repository](https://github.com/agentskills/agentskills/tree/main/skills-ref). Validate each directory under `skills/` individually.
 
 ## License
 
